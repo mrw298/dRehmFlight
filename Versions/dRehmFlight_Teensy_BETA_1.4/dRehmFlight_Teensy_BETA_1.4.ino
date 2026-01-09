@@ -2,7 +2,7 @@
 //Author: Nicholas Rehm
 //Project Start: 1/6/2020
 //Last Updated: 7/29/2022
-//Version: Beta 1.3
+//Version: Beta 1.4
  
 //========================================================================================================================//
 
@@ -18,6 +18,10 @@ MPU9250 implementation based on MPU9250 library by:
 brian.taylor@bolderflight.com
 http://www.bolderflight.com
 
+Adafruit LSM6DSOX implementation added by:
+bjones@aggiejones.com
+http://nvrtd.design
+
 Thank you to:
 RcGroups 'jihlein' - IMU implementation overhaul + SBUS implementation.
 Everyone that sends me pictures and videos of your flying creations! -Nick
@@ -31,15 +35,16 @@ Everyone that sends me pictures and videos of your flying creations! -Nick
 //========================================================================================================================//
 
 //Uncomment only one receiver type
-#define USE_PWM_RX
+//#define USE_PWM_RX
 //#define USE_PPM_RX
-//#define USE_SBUS_RX
+#define USE_SBUS_RX
 //#define USE_DSM_RX
 static const uint8_t num_DSM_channels = 6; //If using DSM RX, change this to match the number of transmitter channels you have
 
 //Uncomment only one IMU
-#define USE_MPU6050_I2C //Default
+//#define USE_MPU6050_I2C //Default
 //#define USE_MPU9250_SPI
+#define USE_LSM6DSOX_SPI
 
 //Uncomment only one full scale gyro range (deg/sec)
 #define GYRO_250DPS //Default
@@ -79,9 +84,30 @@ static const uint8_t num_DSM_channels = 6; //If using DSM RX, change this to mat
 #elif defined USE_MPU9250_SPI
   #include "src/MPU9250/MPU9250.h"
   MPU9250 mpu9250(SPI2,36);
+#elif defined USE_LSM6DSOX_SPI
+  #include <Adafruit_LSM6DSOX.h>
+  Adafruit_LSM6DSOX lsm6dsox;
+
+  #define LSM_MISO 34  // MISO2/DO--red
+  #define LSM_MOSI 35  // MOSI2/SDA--black
+  #define LSM_CS 36     // CS2--green-yellow
+  #define LSM_SCK 37    // SCK2(SCL)--white
+  
+  sensors_event_t accel;
+  sensors_event_t gyro;
+  sensors_event_t temp;  //unused, but could be interesting
 #else
   #error No MPU defined... 
 #endif
+
+// BJ - testing defined values
+#define DEG2RAD  0.0174533f
+#define RAD2DEG  57.29575496f
+#define G2MS     9.80665f
+#define MS2G     0.10197162129779283f
+
+
+
 
 
 
@@ -109,6 +135,15 @@ static const uint8_t num_DSM_channels = 6; //If using DSM RX, change this to mat
   #define ACCEL_FS_SEL_4     mpu9250.ACCEL_RANGE_4G
   #define ACCEL_FS_SEL_8     mpu9250.ACCEL_RANGE_8G
   #define ACCEL_FS_SEL_16    mpu9250.ACCEL_RANGE_16G
+#elif defined USE_LSM6DSOX_SPI
+  #define GYRO_FS_SEL_250    lsm6ds_gyro_range_t::LSM6DS_GYRO_RANGE_250_DPS  //there is also a 125 DPS option
+  #define GYRO_FS_SEL_500    lsm6ds_gyro_range_t::LSM6DS_GYRO_RANGE_500_DPS
+  #define GYRO_FS_SEL_1000   lsm6ds_gyro_range_t::LSM6DS_GYRO_RANGE_1000_DPS
+  #define GYRO_FS_SEL_2000   lsm6ds_gyro_range_t::LSM6DS_GYRO_RANGE_2000_DPS
+  #define ACCEL_FS_SEL_2     lsm6ds_accel_range_t::LSM6DS_ACCEL_RANGE_2_G
+  #define ACCEL_FS_SEL_4     lsm6ds_accel_range_t::LSM6DS_ACCEL_RANGE_4_G
+  #define ACCEL_FS_SEL_8     lsm6ds_accel_range_t::LSM6DS_ACCEL_RANGE_8_G
+  #define ACCEL_FS_SEL_16    lsm6ds_accel_range_t::LSM6DS_ACCEL_RANGE_16_G
 #endif
   
 #if defined GYRO_250DPS
@@ -168,12 +203,12 @@ float MagScaleY = 1.0;
 float MagScaleZ = 1.0;
 
 //IMU calibration parameters - calibrate IMU using calculate_IMU_error() in the void setup() to get these values, then comment out calculate_IMU_error()
-float AccErrorX = 0.00;
+float AccErrorX = -0.01;
 float AccErrorY = 0.01;
-float AccErrorZ = -0.05;
-float GyroErrorX = -0.40;
-float GyroErrorY = 0.55;
-float GyroErrorZ = -0.58;
+float AccErrorZ = 0.04;
+float GyroErrorX = 0.41;
+float GyroErrorY = 0.17;
+float GyroErrorZ = -0.67;
 
 
 //Controller parameters (take note of defaults before modifying!): 
@@ -401,8 +436,8 @@ void loop() {
   //printGyroData();      //Prints filtered gyro data direct from IMU (expected: ~ -250 to 250, 0 at rest)
   //printAccelData();     //Prints filtered accelerometer data direct from IMU (expected: ~ -2 to 2; x,y 0 when level, z 1 when level)
   //printMagData();       //Prints filtered magnetometer data direct from IMU (expected: ~ -300 to 300)
-  printRollPitchYaw();  //Prints roll, pitch, and yaw angles in degrees from Madgwick filter (expected: degrees, 0 when level)
-  //printPIDoutput();     //Prints computed stabilized PID variables from controller and desired setpoint (expected: ~ -1 to 1)
+  //printRollPitchYaw();  //Prints roll, pitch, and yaw angles in degrees from Madgwick filter (expected: degrees, 0 when level)
+  printPIDoutput();     //Prints computed stabilized PID variables from controller and desired setpoint (expected: ~ -1 to 1)
   //printMotorCommands(); //Prints the values being written to the motors (expected: 120 to 250)
   //printServoCommands(); //Prints the values being written to the servos (expected: 0 to 180)
   //printLoopRate();      //Prints the time between loops in microseconds (expected: microseconds between loop iterations)
@@ -510,9 +545,16 @@ void IMUinit() {
     mpu6050.initialize();
     
     if (mpu6050.testConnection() == false) {
+      Serial.print("DeviceID: ");
+      Serial.println(mpu6050.getDeviceID());
       Serial.println("MPU6050 initialization unsuccessful");
       Serial.println("Check MPU6050 wiring or try cycling power");
       while(1) {}
+    }
+    else {
+      Serial.print("OK!  DeviceID: ");
+      Serial.println(mpu6050.getDeviceID());
+      Serial.println("MPU6050 initialization successful");
     }
 
     //From the reset state all registers should be 0x00, so we should be at
@@ -541,7 +583,24 @@ void IMUinit() {
     mpu9250.setMagCalY(MagErrorY, MagScaleY);
     mpu9250.setMagCalZ(MagErrorZ, MagScaleZ);
     mpu9250.setSrd(0); //sets gyro and accel read to 1khz, magnetometer read to 100hz
+  
+  #elif defined USE_LSM6DSOX_SPI
+    if (!lsm6dsox.begin_SPI(LSM_CS, LSM_SCK, LSM_MISO, LSM_MOSI)) {
+      Serial.println("Failed to find LSM6DSOX chip");
+      Serial.println("LSM6DSOX initialization unsuccessful");
+      Serial.println("Check LSM6DSOX wiring or try cycling power");
+      while (1) {}
+    }
+    else {
+      Serial.println("LSM6DSOX Found!");
+    }
+    lsm6dsox.setGyroRange(GYRO_SCALE);
+    lsm6dsox.setAccelRange(ACCEL_SCALE);
+    // Set the data rate of the board higher than stock 104Hz
+    // lsm6dsox.setAccelDataRate(LSM6DS_RATE_6_66K_HZ);
+    // lsm6dsox.setGyroDataRate(LSM6DS_RATE_6_66K_HZ);
   #endif
+
 }
 
 void getIMUdata() {
@@ -554,18 +613,54 @@ void getIMUdata() {
    * the readings. The filter parameters B_gyro and B_accel are set to be good for a 2kHz loop rate. Finally,
    * the constant errors found in calculate_IMU_error() on startup are subtracted from the accelerometer and gyro readings.
    */
-  int16_t AcX,AcY,AcZ,GyX,GyY,GyZ,MgX,MgY,MgZ;
+  #ifndef USE_LSM6DSOX_SPI
+    int16_t AcX = 0;
+    int16_t AcY = 0;
+    int16_t AcZ = 0;
+    int16_t GyX = 0;
+    int16_t GyY = 0;
+    int16_t GyZ = 0;
+    int16_t MgX = 0;
+    int16_t MgY = 0;
+    int16_t MgZ = 0;
+  #endif
 
   #if defined USE_MPU6050_I2C
     mpu6050.getMotion6(&AcX, &AcY, &AcZ, &GyX, &GyY, &GyZ);
   #elif defined USE_MPU9250_SPI
     mpu9250.getMotion9(&AcX, &AcY, &AcZ, &GyX, &GyY, &GyZ, &MgX, &MgY, &MgZ);
+  #elif defined USE_LSM6DSOX_SPI
+    lsm6dsox.getEvent(&accel, &gyro, &temp);
+
+    // THe LSM6DSOX has the X and Y reversed from the MPU6050 as well has having the X/Y accelerometers reversed and Y gyro reversed    
+    AccX = accel.acceleration.y * MS2G;  // Convert m/s to G-factor
+    AccY = accel.acceleration.x * -MS2G;
+    AccZ = accel.acceleration.z * MS2G;
+    GyroX = gyro.gyro.y * RAD2DEG;  // convert rad/s back to deg/sec
+    GyroY = gyro.gyro.x * -RAD2DEG;
+    GyroZ = gyro.gyro.z * RAD2DEG;
+
+
   #endif
 
- //Accelerometer
-  AccX = AcX / ACCEL_SCALE_FACTOR; //G's
-  AccY = AcY / ACCEL_SCALE_FACTOR;
-  AccZ = AcZ / ACCEL_SCALE_FACTOR;
+  // The MPU6050 and MPU9250 IMUs have a different scale factor from the LSM6DSOX 
+  #ifndef USE_LSM6DSOX_SPI
+  //Accelerometer
+    AccX = AcX / ACCEL_SCALE_FACTOR; //G's
+    AccY = AcY / ACCEL_SCALE_FACTOR;
+    AccZ = AcZ / ACCEL_SCALE_FACTOR;
+
+    //Gyro
+    GyroX = GyX / GYRO_SCALE_FACTOR; //deg/sec
+    GyroY = GyY / GYRO_SCALE_FACTOR;
+    GyroZ = GyZ / GYRO_SCALE_FACTOR;
+
+    //Magnetometer
+    MagX = MgX/6.0; //uT
+    MagY = MgY/6.0;
+    MagZ = MgZ/6.0;
+  #endif
+
   //Correct the outputs with the calculated error values
   AccX = AccX - AccErrorX;
   AccY = AccY - AccErrorY;
@@ -578,10 +673,6 @@ void getIMUdata() {
   AccY_prev = AccY;
   AccZ_prev = AccZ;
 
-  //Gyro
-  GyroX = GyX / GYRO_SCALE_FACTOR; //deg/sec
-  GyroY = GyY / GYRO_SCALE_FACTOR;
-  GyroZ = GyZ / GYRO_SCALE_FACTOR;
   //Correct the outputs with the calculated error values
   GyroX = GyroX - GyroErrorX;
   GyroY = GyroY - GyroErrorY;
@@ -594,10 +685,6 @@ void getIMUdata() {
   GyroY_prev = GyroY;
   GyroZ_prev = GyroZ;
 
-  //Magnetometer
-  MagX = MgX/6.0; //uT
-  MagY = MgY/6.0;
-  MagZ = MgZ/6.0;
   //Correct the outputs with the calculated error values
   MagX = (MagX - MagErrorX)*MagScaleX;
   MagY = (MagY - MagErrorY)*MagScaleY;
@@ -618,7 +705,14 @@ void calculate_IMU_error() {
    * accelerometer values AccX, AccY, AccZ, GyroX, GyroY, GyroZ in getIMUdata(). This eliminates drift in the
    * measurement. 
    */
-  int16_t AcX,AcY,AcZ,GyX,GyY,GyZ,MgX,MgY,MgZ;
+  #ifndef USE_LSM6DSOX_SPI
+    int16_t AcX = 0;
+    int16_t AcY = 0;
+    int16_t AcZ = 0;
+    int16_t GyX = 0;
+    int16_t GyY = 0;
+    int16_t GyZ = 0;
+  #endif
   AccErrorX = 0.0;
   AccErrorY = 0.0;
   AccErrorZ = 0.0;
@@ -633,15 +727,32 @@ void calculate_IMU_error() {
       mpu6050.getMotion6(&AcX, &AcY, &AcZ, &GyX, &GyY, &GyZ);
     #elif defined USE_MPU9250_SPI
       mpu9250.getMotion9(&AcX, &AcY, &AcZ, &GyX, &GyY, &GyZ, &MgX, &MgY, &MgZ);
+    #elif defined USE_LSM6DSOX_SPI
+      lsm6dsox.getEvent(&accel, &gyro, &temp);
+
+      // THe LSM6DSOX has the X and Y reversed from the MPU6050 as well has having the X/Y accelerometers reversed and Y gyro reversed    
+      AccX = accel.acceleration.y *  MS2G;  // Convert m/s to G-factor
+      AccY = accel.acceleration.x * -MS2G;
+      AccZ = accel.acceleration.z *  MS2G;
+      GyroX = gyro.gyro.y *  RAD2DEG;  // convert rad/s back to deg/sec
+      GyroY = gyro.gyro.x * -RAD2DEG;
+      GyroZ = gyro.gyro.z *  RAD2DEG;
+
     #endif
-    
-    AccX  = AcX / ACCEL_SCALE_FACTOR;
-    AccY  = AcY / ACCEL_SCALE_FACTOR;
-    AccZ  = AcZ / ACCEL_SCALE_FACTOR;
-    GyroX = GyX / GYRO_SCALE_FACTOR;
-    GyroY = GyY / GYRO_SCALE_FACTOR;
-    GyroZ = GyZ / GYRO_SCALE_FACTOR;
-    
+
+    // The MPU6050 and MPU9250 IMUs have a different scale factor from the LSM6DSOX
+    #ifndef USE_LSM6DSOX_SPI
+    //Accelerometer
+      AccX = AcX / ACCEL_SCALE_FACTOR; //G's
+      AccY = AcY / ACCEL_SCALE_FACTOR;
+      AccZ = AcZ / ACCEL_SCALE_FACTOR;
+
+      //Gyro
+      GyroX = GyX / GYRO_SCALE_FACTOR; //deg/sec
+      GyroY = GyY / GYRO_SCALE_FACTOR;
+      GyroZ = GyZ / GYRO_SCALE_FACTOR;
+    #endif
+
     //Sum all readings
     AccErrorX  = AccErrorX + AccX;
     AccErrorY  = AccErrorY + AccY;
@@ -680,6 +791,7 @@ void calculate_IMU_error() {
   Serial.println(";");
 
   Serial.println("Paste these values in user specified variables section and comment out calculate_IMU_error() in void setup.");
+  while(1);
 }
 
 void calibrateAttitude() {
@@ -728,9 +840,9 @@ void Madgwick(float gx, float gy, float gz, float ax, float ay, float az, float 
   }
 
   //Convert gyroscope degrees/sec to radians/sec
-  gx *= 0.0174533f;
-  gy *= 0.0174533f;
-  gz *= 0.0174533f;
+  gx *= DEG2RAD;
+  gy *= DEG2RAD;
+  gz *= DEG2RAD;
 
   //Rate of change of quaternion from gyroscope
   qDot1 = 0.5f * (-q1 * gx - q2 * gy - q3 * gz);
@@ -815,9 +927,9 @@ void Madgwick(float gx, float gy, float gz, float ax, float ay, float az, float 
   q3 *= recipNorm;
   
   //compute angles - NWU
-  roll_IMU = atan2(q0*q1 + q2*q3, 0.5f - q1*q1 - q2*q2)*57.29577951; //degrees
-  pitch_IMU = -asin(constrain(-2.0f * (q1*q3 - q0*q2),-0.999999,0.999999))*57.29577951; //degrees
-  yaw_IMU = -atan2(q1*q2 + q0*q3, 0.5f - q2*q2 - q3*q3)*57.29577951; //degrees
+  roll_IMU  = atan2 (q0*q1 + q2*q3, 0.5f - q1*q1 - q2*q2)                  *57.29577951; //degrees
+  pitch_IMU = -asin (constrain(-2.0f * (q1*q3 - q0*q2),-0.999999,0.999999))*57.29577951; //degrees
+  yaw_IMU   = -atan2(q1*q2 + q0*q3, 0.5f - q2*q2 - q3*q3)                  *57.29577951; //degrees
 }
 
 void Madgwick6DOF(float gx, float gy, float gz, float ax, float ay, float az, float invSampleFreq) {
@@ -832,9 +944,9 @@ void Madgwick6DOF(float gx, float gy, float gz, float ax, float ay, float az, fl
   float _2q0, _2q1, _2q2, _2q3, _4q0, _4q1, _4q2 ,_8q1, _8q2, q0q0, q1q1, q2q2, q3q3;
 
   //Convert gyroscope degrees/sec to radians/sec
-  gx *= 0.0174533f;
-  gy *= 0.0174533f;
-  gz *= 0.0174533f;
+  gx *= DEG2RAD;
+  gy *= DEG2RAD;
+  gz *= DEG2RAD;
 
   //Rate of change of quaternion from gyroscope
   qDot1 = 0.5f * (-q1 * gx - q2 * gy - q3 * gz);
@@ -897,9 +1009,9 @@ void Madgwick6DOF(float gx, float gy, float gz, float ax, float ay, float az, fl
   q3 *= recipNorm;
 
   //Compute angles
-  roll_IMU = atan2(q0*q1 + q2*q3, 0.5f - q1*q1 - q2*q2)*57.29577951; //degrees
-  pitch_IMU = -asin(constrain(-2.0f * (q1*q3 - q0*q2),-0.999999,0.999999))*57.29577951; //degrees
-  yaw_IMU = -atan2(q1*q2 + q0*q3, 0.5f - q2*q2 - q3*q3)*57.29577951; //degrees
+  roll_IMU  = atan2 (q0*q1 + q2*q3, 0.5f - q1*q1 - q2*q2)                  *57.29577951; //degrees
+  pitch_IMU = -asin (constrain(-2.0f * (q1*q3 - q0*q2),-0.999999,0.999999))*57.29577951; //degrees
+  yaw_IMU   = -atan2(q1*q2 + q0*q3, 0.5f - q2*q2 - q3*q3)                  *57.29577951; //degrees
 }
 
 void getDesState() {
@@ -1027,7 +1139,7 @@ void controlANGLE2() {
   }
   integral_roll_il = constrain(integral_roll_il, -i_limit, i_limit); //Saturate integrator to prevent unsafe buildup
   derivative_roll = (error_roll - error_roll_prev)/dt; 
-  roll_PID = .01*(Kp_roll_rate*error_roll + Ki_roll_rate*integral_roll_il + Kd_roll_rate*derivative_roll); //Scaled by .01 to bring within -1 to 1 range
+  roll_PID = 0.01*(Kp_roll_rate*error_roll + Ki_roll_rate*integral_roll_il + Kd_roll_rate*derivative_roll); //Scaled by .01 to bring within -1 to 1 range
 
   //Pitch
   error_pitch = pitch_des_ol - GyroY;
@@ -1037,7 +1149,7 @@ void controlANGLE2() {
   }
   integral_pitch_il = constrain(integral_pitch_il, -i_limit, i_limit); //Saturate integrator to prevent unsafe buildup
   derivative_pitch = (error_pitch - error_pitch_prev)/dt; 
-  pitch_PID = .01*(Kp_pitch_rate*error_pitch + Ki_pitch_rate*integral_pitch_il + Kd_pitch_rate*derivative_pitch); //Scaled by .01 to bring within -1 to 1 range
+  pitch_PID = 0.01*(Kp_pitch_rate*error_pitch + Ki_pitch_rate*integral_pitch_il + Kd_pitch_rate*derivative_pitch); //Scaled by .01 to bring within -1 to 1 range
   
   //Yaw
   error_yaw = yaw_des - GyroZ;
@@ -1047,7 +1159,7 @@ void controlANGLE2() {
   }
   integral_yaw = constrain(integral_yaw, -i_limit, i_limit); //Saturate integrator to prevent unsafe buildup
   derivative_yaw = (error_yaw - error_yaw_prev)/dt; 
-  yaw_PID = .01*(Kp_yaw*error_yaw + Ki_yaw*integral_yaw + Kd_yaw*derivative_yaw); //Scaled by .01 to bring within -1 to 1 range
+  yaw_PID = 0.01*(Kp_yaw*error_yaw + Ki_yaw*integral_yaw + Kd_yaw*derivative_yaw); //Scaled by .01 to bring within -1 to 1 range
   
   //Update roll variables
   integral_roll_prev_ol = integral_roll_ol;
@@ -1175,8 +1287,7 @@ void getCommands() {
     channel_6_pwm = getRadioPWM(6);
     
   #elif defined USE_SBUS_RX
-    if (sbus.read(&sbusChannels[0], &sbusFailSafe, &sbusLostFrame))
-    {
+    if (sbus.read(&sbusChannels[0], &sbusFailSafe, &sbusLostFrame)) {
       //sBus scaling below is for Taranis-Plus and X4R-SB
       float scale = 0.615;  
       float bias  = 895.0; 
@@ -1225,26 +1336,39 @@ void failSafe() {
    * connection (most likely hardware related). If any of the channels show this failure, then all of the radio commands 
    * channel_x_pwm are set to default failsafe values specified in the setup. Comment out this function when troubleshooting 
    * your radio connection in case any extreme values are triggering this function to overwrite the printed variables.
+   * 
+   * When using SBUS, the library handles the detection of lost frames and failsafe.  Some receivers handle failsafe differently.
+   * Testing with FrSky SBUS receivers immediately triggered failsafe when Tx disconnected.  A Radiomaster RP3-H ELRS receiver would
+   * not trigger failsafe when set to "No Pulses", but would trigger when set to "Last Position" after a few seconds.
+   * Test your receiver's behavior! You can do this with the example sketch in the "Bolder Flight Systems SBUS" library.
    */
-  unsigned minVal = 800;
-  unsigned maxVal = 2200;
-  int check1 = 0;
-  int check2 = 0;
-  int check3 = 0;
-  int check4 = 0;
-  int check5 = 0;
-  int check6 = 0;
 
-  //Triggers for failure criteria
-  if (channel_1_pwm > maxVal || channel_1_pwm < minVal) check1 = 1;
-  if (channel_2_pwm > maxVal || channel_2_pwm < minVal) check2 = 1;
-  if (channel_3_pwm > maxVal || channel_3_pwm < minVal) check3 = 1;
-  if (channel_4_pwm > maxVal || channel_4_pwm < minVal) check4 = 1;
-  if (channel_5_pwm > maxVal || channel_5_pwm < minVal) check5 = 1;
-  if (channel_6_pwm > maxVal || channel_6_pwm < minVal) check6 = 1;
+  //If using SBUS, this will only check the boolean failsafe value from the SBUS library.  If using PWM RX, it checks each channel.
+  #ifndef USE_SBUS_RX
+    unsigned minVal = 800;
+    unsigned maxVal = 2200;
+    int check1 = 0;
+    int check2 = 0;
+    int check3 = 0;
+    int check4 = 0;
+    int check5 = 0;
+    int check6 = 0;
+
+    //Triggers for failure criteria
+    if (channel_1_pwm > maxVal || channel_1_pwm < minVal) check1 = 1;
+    if (channel_2_pwm > maxVal || channel_2_pwm < minVal) check2 = 1;
+    if (channel_3_pwm > maxVal || channel_3_pwm < minVal) check3 = 1;
+    if (channel_4_pwm > maxVal || channel_4_pwm < minVal) check4 = 1;
+    if (channel_5_pwm > maxVal || channel_5_pwm < minVal) check5 = 1;
+    if (channel_6_pwm > maxVal || channel_6_pwm < minVal) check6 = 1;
+  #endif
 
   //If any failures, set to default failsafe values
+  #ifdef USE_SBUS_RX
+  if (sbusFailSafe) {
+  #else
   if ((check1 + check2 + check3 + check4 + check5 + check6) > 0) {
+  #endif
     channel_1_pwm = channel_1_fs;
     channel_2_pwm = channel_2_fs;
     channel_3_pwm = channel_3_fs;
@@ -1574,6 +1698,8 @@ void setupBlink(int numBlinks,int upTime, int downTime) {
 void printRadioData() {
   if (current_time - print_counter > 10000) {
     print_counter = micros();
+    Serial.print(F("LOW:1000.0"));
+    Serial.print(F(" HIGH:2000.0"));
     Serial.print(F(" CH1:"));
     Serial.print(channel_1_pwm);
     Serial.print(F(" CH2:"));
@@ -1592,7 +1718,9 @@ void printRadioData() {
 void printDesiredState() {
   if (current_time - print_counter > 10000) {
     print_counter = micros();
-    Serial.print(F("thro_des:"));
+    Serial.print(F("LOW:-180.0"));
+    Serial.print(F(" HIGH:180.0"));
+    Serial.print(F(" thro_des:"));
     Serial.print(thro_des);
     Serial.print(F(" roll_des:"));
     Serial.print(roll_des);
@@ -1634,7 +1762,9 @@ void printAccelData() {
 void printMagData() {
   if (current_time - print_counter > 10000) {
     print_counter = micros();
-    Serial.print(F("MagX:"));
+    Serial.print(F("LOW:-300.0"));
+    Serial.print(F(" HIGH:300.0"));
+    Serial.print(F(" MagX:"));
     Serial.print(MagX);
     Serial.print(F(" MagY:"));
     Serial.print(MagY);
@@ -1674,7 +1804,9 @@ void printPIDoutput() {
 void printMotorCommands() {
   if (current_time - print_counter > 10000) {
     print_counter = micros();
-    Serial.print(F("m1_command:"));
+    Serial.print(F("LOW:125.0"));
+    Serial.print(F(" HIGH:250.0"));
+    Serial.print(F(" m1_command:"));
     Serial.print(m1_command_PWM);
     Serial.print(F(" m2_command:"));
     Serial.print(m2_command_PWM);
@@ -1692,7 +1824,9 @@ void printMotorCommands() {
 void printServoCommands() {
   if (current_time - print_counter > 10000) {
     print_counter = micros();
-    Serial.print(F("s1_command:"));
+    Serial.print(F("LOW:0.0"));
+    Serial.print(F(" HIGH:180.0"));
+    Serial.print(F(" s1_command:"));
     Serial.print(s1_command_PWM);
     Serial.print(F(" s2_command:"));
     Serial.print(s2_command_PWM);
